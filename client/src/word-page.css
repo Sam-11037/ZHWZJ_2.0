@@ -1,0 +1,35 @@
+.word-page-wrap {
+  background: #ededed;
+  min-height: 100vh;
+  padding: 32px 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+
+.word-page {
+  background: #fff;
+  width: 794px;         /* A4宽度 */
+  min-height: 1123px;   /* A4高度 */
+  box-shadow: 0 4px 24px 0 rgba(22,119,255,0.10), 0 1.5px 6px 0 rgba(0,0,0,0.06);
+  border-radius: 12px;
+  margin: 0 auto;
+  box-sizing: border-box;
+  padding: 48px 40px;
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-start;
+}
+.ql-container.ql-snow {
+  border: none !important;
+  border-radius: 0 !important;
+  background: transparent !important;
+}
+.ql-editor {
+  min-height: 900px;
+  font-size: 18px;
+  line-height: 1.8;
+  color: #222;
+  font-family: 'Microsoft YaHei', 'SimSun', Arial, sans-serif;
+  box-sizing: border-box;
+}

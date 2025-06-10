@@ -14,6 +14,7 @@ import './word-page.css';
 import { List, Tooltip } from 'antd';
 import { HistoryOutlined, RollbackOutlined, DiffOutlined } from '@ant-design/icons';
 import DiffMatchPatch from 'diff-match-patch';
+import { QuillDeltaToHtmlConverter } from 'quill-delta-to-html';
 
 // 获取内容
 function getPlainTextFromDelta(delta: any) {
@@ -28,22 +29,123 @@ function getPlainTextFromDelta(delta: any) {
   }
   return '';
 }
+function deltaToHtml(delta: any) {
+  if (!delta) return '';
+  let ops = Array.isArray(delta) ? delta : delta.ops;
+  if (!ops) return '';
+  const converter = new QuillDeltaToHtmlConverter(ops, {});
+  return converter.convert();
+}
 
-// 生成高亮 diff HTML
-function getDiffHtml(oldText: string, nowText: string) {
+function richDiffHtml(oldDelta: any, newDelta: any) {
+  const oldOps = Array.isArray(oldDelta) ? oldDelta : oldDelta?.ops || [];
+  const newOps = Array.isArray(newDelta) ? newDelta : newDelta?.ops || [];
+
+  // 提取文本和 embed 片段
+  function extractSegments(ops: any[]) {
+    return ops.map(op => {
+      if (typeof op.insert === 'string') {
+        return { type: 'text', value: op.insert, attributes: op.attributes || {} };
+      } else {
+        return { type: 'embed', value: op.insert, attributes: op.attributes || {} };
+      }
+    });
+  }
+
+  const oldSegs = extractSegments(oldOps);
+  const newSegs = extractSegments(newOps);
+
+  // diff-match-patch 只对文本做 diff
+  const oldText = oldSegs.filter(s => s.type === 'text').map(s => s.value).join('');
+  const newText = newSegs.filter(s => s.type === 'text').map(s => s.value).join('');
   const dmp = new DiffMatchPatch();
-  const diffs = dmp.diff_main(oldText, nowText);
+  const diffs = dmp.diff_main(oldText, newText);
   dmp.diff_cleanupSemantic(diffs);
-  return diffs.map(([op, data], i) => {
-    if (op === DiffMatchPatch.DIFF_INSERT) {
-      return <span key={i} style={{ background: '#d4fcdc', color: '#388e3c' }}>{data}</span>;
+
+  // diff 游标
+  let diffIdx = 0;
+  let diffOffset = 0;
+
+  // 结果
+  let htmlArr: string[] = [];
+
+  // 遍历 newSegs，遇到文本就用 diff，遇到 embed 就直接输出
+  newSegs.forEach(seg => {
+    if (seg.type === 'embed') {
+      // 直接输出 embed
+      const converter = new QuillDeltaToHtmlConverter([{ insert: seg.value, attributes: seg.attributes }], {});
+      htmlArr.push(converter.convert());
+    } else {
+      // 处理文本，按 \n 分段
+      let remain = seg.value;
+      while (remain.length > 0 && diffIdx < diffs.length) {
+        let [op, data] = diffs[diffIdx];
+        let dataRemain = data.slice(diffOffset);
+        if (dataRemain.length === 0) {
+          diffIdx++;
+          diffOffset = 0;
+          continue;
+        }
+        if (remain.startsWith(dataRemain)) {
+          // 完全匹配
+          if (op === DiffMatchPatch.DIFF_INSERT) {
+            htmlArr.push(`<span style="background:#d4fcdc;color:#388e3c;">${escapeHtml(dataRemain)}</span>`);
+          } else if (op === DiffMatchPatch.DIFF_DELETE) {
+            // 删除的不显示
+          } else {
+            htmlArr.push(escapeHtml(dataRemain));
+          }
+          remain = remain.slice(dataRemain.length);
+          diffIdx++;
+          diffOffset = 0;
+        } else if (dataRemain.startsWith(remain)) {
+          // 部分匹配
+          if (op === DiffMatchPatch.DIFF_INSERT) {
+            htmlArr.push(`<span style="background:#d4fcdc;color:#388e3c;">${escapeHtml(remain)}</span>`);
+          } else if (op === DiffMatchPatch.DIFF_DELETE) {
+            // 删除的不显示
+          } else {
+            htmlArr.push(escapeHtml(remain));
+          }
+          diffOffset += remain.length;
+          remain = '';
+        } else {
+          // 不匹配，说明 diff 结果和 seg 不完全对齐，直接输出
+          htmlArr.push(escapeHtml(remain));
+          remain = '';
+        }
+      }
     }
-    if (op === DiffMatchPatch.DIFF_DELETE) {
-      return <span key={i} style={{ background: '#ffecec', color: '#d32f2f', textDecoration: 'line-through' }}>{data}</span>;
+  });
+
+  // 按 \n 分段，每段用 <p> 包裹，空行用 <p><br></p>
+  let finalArr: string[] = [];
+  let buffer = '';
+  htmlArr.join('').split('\n').forEach((part, idx, arr) => {
+    if (part === '' && idx === arr.length - 1) return; // 末尾空行不输出
+    if (part === '') {
+      finalArr.push('<p><br></p>');
+    } else {
+      finalArr.push(`<p>${part}</p>`);
     }
-    return <span key={i}>{data}</span>;
+  });
+
+  return finalArr.join('');
+}
+
+// HTML 转义
+function escapeHtml(str: string) {
+  return str.replace(/[&<>"']/g, function (m) {
+    return ({
+      '&': '&amp;',
+      '<': '&lt;',
+      '>': '&gt;',
+      '"': '&quot;',
+      "'": '&#39;'
+    } as any)[m];
   });
 }
+
 
 // 字号样式支持
 const fontSizeStyle = Quill.import('attributors/style/size');
@@ -254,9 +356,11 @@ const DocumentEditor: React.FC = () => {
       theme: 'snow',
       placeholder: '请输入内容',
       modules: {
-        toolbar: isViewer ? false : { container: '#toolbar' },
+        toolbar: isViewer ? false :  '#toolbar' ,
         cursors: true,
-        history: { userOnly: true }
+        history: { userOnly: true },
+
+    
       },
       readOnly: isViewer
     });
@@ -264,20 +368,6 @@ const DocumentEditor: React.FC = () => {
 
     // 绑定 Yjs 和 Quill
     const ytext = ydoc.getText('quill');
-    provider.on('sync', async (isSynced: boolean) => {
-      if (isSynced && ytext.toString().length === 0) {
-        const token = localStorage.getItem('token');
-        try {
-          const res = await axios.get(`http://localhost:4000/documents/${id}`, {
-            headers: { Authorization: `Bearer ${token}` }
-          });
-          const dbContent = res.data.content;
-          if (dbContent) {
-            ytext.applyDelta(dbContent.ops || []);
-          }
-        } catch (e) {}
-      }
-    });
 
     const binding = new QuillBinding(ytext, quill, provider.awareness);
     bindingRef.current = binding;
@@ -873,6 +963,7 @@ const DocumentEditor: React.FC = () => {
           <button className="ql-image" />
           <button className="ql-video" />
           <button className="ql-formula" />
+          {/* <button className="ql-table" title="插入表格"></button> */}
           <button className="ql-clean" />
         </div>
       )}
@@ -908,7 +999,7 @@ const DocumentEditor: React.FC = () => {
               <span style={{ flex: 1 }}>
                 {u.username}
                 {docInfo && docInfo.owner && u._id === docInfo.owner._id && (
-                  <span style={{ color: '#1677ff', marginLeft: 8 }}>（拥有者）</span>
+                  <span style={{ color: '#1677ff', marginLeft: 8 }}>（owner）</span>
                 )}
               </span>
               {docInfo && docInfo.owner && u._id === docInfo.owner._id ? (
@@ -940,7 +1031,7 @@ const DocumentEditor: React.FC = () => {
           ))}
         </div>
         <div style={{ marginTop: 16, color: '#888', fontSize: 13 }}>
-          只能设置为协作者范围内的用户。拥有者默认拥有所有权限。
+          只能设置为协作者范围内的用户
         </div>
       </Drawer>
       <Drawer
@@ -998,21 +1089,20 @@ const DocumentEditor: React.FC = () => {
         footer={null}
         width={800}
       >
-        <div style={{ display: 'flex', gap: 16 }}>
+        <div style={{ display: 'flex', gap: 16 }} className="diff-modal-content">
           <div style={{ flex: 1 }}>
             <div style={{ fontWeight: 600, marginBottom: 8 }}>历史版本</div>
-            <pre style={{ background: '#f6f6f6', padding: 8, minHeight: 120, whiteSpace: 'pre-wrap' }}>
-              {getPlainTextFromDelta(compareContent?.old)}
-            </pre>
+            <div
+              style={{ background: '#f6f6f6', padding: 8, minHeight: 120 }}
+              dangerouslySetInnerHTML={{ __html: deltaToHtml(compareContent?.old) }}
+            />
           </div>
           <div style={{ flex: 1 }}>
             <div style={{ fontWeight: 600, marginBottom: 8 }}>当前内容</div>
-            <pre style={{ background: '#f6f6f6', padding: 8, minHeight: 120, whiteSpace: 'pre-wrap' }}>
-              {getDiffHtml(
-                getPlainTextFromDelta(compareContent?.old),
-                getPlainTextFromDelta(compareContent?.now)
-              )}
-            </pre>
+            <div
+              style={{ background: '#f6f6f6', padding: 8, minHeight: 120 }}
+              dangerouslySetInnerHTML={{ __html: richDiffHtml(compareContent?.old, compareContent?.now) }}
+            />
           </div>
         </div>
       </Modal>

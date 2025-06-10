@@ -1,13 +1,12 @@
+const dotenv = require('dotenv');
+dotenv.config();
 const express = require('express');
 const mongoose = require('mongoose');
 const cors = require('cors');
-const dotenv = require('dotenv');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const path = require('path');
 const multer = require('multer');
-
-dotenv.config();
 
 const app = express();
 
@@ -23,7 +22,8 @@ const io = new Server(server, {
 
 
 app.use(cors());
-app.use(express.json());
+app.use(express.json({ limit: '1gb' }));
+app.use(express.urlencoded({ limit: '1gb', extended: true }));
 
 // === 连接数据库（带重试）===
 const connectWithRetry = () => {
@@ -83,6 +83,10 @@ app.post('/login', async (req, res) => {
 
 // JWT 验证中间件：验证 sessionId 是否匹配
 const verifyToken = (req, res, next) => {
+  if (req.header('X-Internal-Secret') === process.env.YWS_INTERNAL_SECRET) {
+    console.log('内部密钥校验通过');
+    return next();
+  }
   const token = req.header('Authorization')?.split(' ')[1];
   if (!token) return res.status(401).json({ message: 'No token provided' });
 
@@ -284,7 +288,10 @@ app.get('/documents/:id', verifyToken, async (req, res) => {
       .populate('documentCollUser', 'username') // 只返回用户名
       .populate('editHistory.editor', 'username avatar');
     if (!doc) return res.status(404).json({ message: 'Document not found' });
-
+    // 如果是内部密钥请求，直接返回
+    if (req.header('X-Internal-Secret') === process.env.YWS_INTERNAL_SECRET) {
+      return res.json(doc);
+    }
     // 权限判断
     const isOwner = doc.owner._id.toString() === req.userId;
     const isEditor = Array.isArray(doc.editors) && doc.editors.some(e => (e._id || e).toString() === req.userId);

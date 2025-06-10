@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useRef, useState, useCallback } from 'react';
 import Quill from 'quill';
 import QuillCursors from 'quill-cursors';
 import 'quill/dist/quill.snow.css';
@@ -8,14 +8,21 @@ import * as Y from 'yjs';
 import axios from 'axios';
 import { useParams, useNavigate } from 'react-router-dom';
 import { io, Socket } from 'socket.io-client'; // 新增
-import { Modal, Select, Button, message, Drawer, Radio, Input } from 'antd'; // 替换 Modal, Select
+import { Modal, Select, Button, message, Drawer, Radio, Input,Form } from 'antd'; // 替换 Modal, Select
 import { ExclamationCircleOutlined, DeleteOutlined } from '@ant-design/icons';
 import './word-page.css';
 import { List, Tooltip } from 'antd';
 import { HistoryOutlined, RollbackOutlined, DiffOutlined } from '@ant-design/icons';
 import DiffMatchPatch from 'diff-match-patch';
 import { QuillDeltaToHtmlConverter } from 'quill-delta-to-html';
-
+import Delta from 'quill-delta';
+import { Dropdown, Menu } from 'antd';
+import { DownOutlined } from '@ant-design/icons';
+import ImageResize from 'quill-image-resize-module-plus';
+import htmlDocx from 'html-docx-js/dist/html-docx';
+import jsPDF from 'jspdf';
+import html2canvas from 'html2canvas';
+Quill.register('modules/imageResize', ImageResize);
 // 获取内容
 function getPlainTextFromDelta(delta: any) {
   if (!delta) return '';
@@ -36,117 +43,81 @@ function deltaToHtml(delta: any) {
   const converter = new QuillDeltaToHtmlConverter(ops, {});
   return converter.convert();
 }
-
+// 富文本 diff
 function richDiffHtml(oldDelta: any, newDelta: any) {
   const oldOps = Array.isArray(oldDelta) ? oldDelta : oldDelta?.ops || [];
   const newOps = Array.isArray(newDelta) ? newDelta : newDelta?.ops || [];
 
-  // 提取文本和 embed 片段
-  function extractSegments(ops: any[]) {
-    return ops.map(op => {
+  const deltaA = new Delta(oldOps);
+  const deltaB = new Delta(newOps);
+  const diff = deltaA.diff(deltaB);
+
+  let oldIdx = 0, newIdx = 0;
+  let result: any[] = [];
+
+  (diff.ops || []).forEach(op => {
+    // 先处理删除
+    if (op.delete !== undefined) {
+      const delLen = typeof op.delete === 'number' ? op.delete : 0;
+      for (let i = 0; i < delLen; i++) {
+        if (oldOps[oldIdx]) {
+          result.push({
+            insert: oldOps[oldIdx].insert,
+            attributes: {
+              ...(oldOps[oldIdx].attributes || {}),
+              style: [
+                (oldOps[oldIdx].attributes?.style || ''),
+                'color:#e74c3c;text-decoration:line-through;'
+              ].filter(Boolean).join(';')
+            }
+          });
+        }
+        oldIdx++;
+      }
+    }
+    // 再处理保留
+    if (op.retain !== undefined) {
+      const retainLen = typeof op.retain === 'number' ? op.retain : 0;
+      for (let i = 0; i < retainLen; i++) {
+        if (newOps[newIdx]) {
+          result.push(newOps[newIdx]);
+        }
+        oldIdx++;
+        newIdx++;
+      }
+    }
+    // 最后处理新增
+    if (op.insert !== undefined) {
+      result.push({
+        insert: op.insert,
+        attributes: {
+          ...(op.attributes || {}),
+          ...(newOps[newIdx]?.attributes || {}),
+          style: [
+            (newOps[newIdx]?.attributes?.style || ''),
+            'background-color:#d4fcdc;color:#388e3c;'
+          ].filter(Boolean).join(';')
+        }
+      });
       if (typeof op.insert === 'string') {
-        return { type: 'text', value: op.insert, attributes: op.attributes || {} };
+        newIdx += op.insert.length;
       } else {
-        return { type: 'embed', value: op.insert, attributes: op.attributes || {} };
-      }
-    });
-  }
-
-  const oldSegs = extractSegments(oldOps);
-  const newSegs = extractSegments(newOps);
-
-  // diff-match-patch 只对文本做 diff
-  const oldText = oldSegs.filter(s => s.type === 'text').map(s => s.value).join('');
-  const newText = newSegs.filter(s => s.type === 'text').map(s => s.value).join('');
-  const dmp = new DiffMatchPatch();
-  const diffs = dmp.diff_main(oldText, newText);
-  dmp.diff_cleanupSemantic(diffs);
-
-  // diff 游标
-  let diffIdx = 0;
-  let diffOffset = 0;
-
-  // 结果
-  let htmlArr: string[] = [];
-
-  // 遍历 newSegs，遇到文本就用 diff，遇到 embed 就直接输出
-  newSegs.forEach(seg => {
-    if (seg.type === 'embed') {
-      // 直接输出 embed
-      const converter = new QuillDeltaToHtmlConverter([{ insert: seg.value, attributes: seg.attributes }], {});
-      htmlArr.push(converter.convert());
-    } else {
-      // 处理文本，按 \n 分段
-      let remain = seg.value;
-      while (remain.length > 0 && diffIdx < diffs.length) {
-        let [op, data] = diffs[diffIdx];
-        let dataRemain = data.slice(diffOffset);
-        if (dataRemain.length === 0) {
-          diffIdx++;
-          diffOffset = 0;
-          continue;
-        }
-        if (remain.startsWith(dataRemain)) {
-          // 完全匹配
-          if (op === DiffMatchPatch.DIFF_INSERT) {
-            htmlArr.push(`<span style="background:#d4fcdc;color:#388e3c;">${escapeHtml(dataRemain)}</span>`);
-          } else if (op === DiffMatchPatch.DIFF_DELETE) {
-            // 删除的不显示
-          } else {
-            htmlArr.push(escapeHtml(dataRemain));
-          }
-          remain = remain.slice(dataRemain.length);
-          diffIdx++;
-          diffOffset = 0;
-        } else if (dataRemain.startsWith(remain)) {
-          // 部分匹配
-          if (op === DiffMatchPatch.DIFF_INSERT) {
-            htmlArr.push(`<span style="background:#d4fcdc;color:#388e3c;">${escapeHtml(remain)}</span>`);
-          } else if (op === DiffMatchPatch.DIFF_DELETE) {
-            // 删除的不显示
-          } else {
-            htmlArr.push(escapeHtml(remain));
-          }
-          diffOffset += remain.length;
-          remain = '';
-        } else {
-          // 不匹配，说明 diff 结果和 seg 不完全对齐，直接输出
-          htmlArr.push(escapeHtml(remain));
-          remain = '';
-        }
+        newIdx += 1;
       }
     }
   });
 
-  // 按 \n 分段，每段用 <p> 包裹，空行用 <p><br></p>
-  let finalArr: string[] = [];
-  let buffer = '';
-  htmlArr.join('').split('\n').forEach((part, idx, arr) => {
-    if (part === '' && idx === arr.length - 1) return; // 末尾空行不输出
-    if (part === '') {
-      finalArr.push('<p><br></p>');
-    } else {
-      finalArr.push(`<p>${part}</p>`);
-    }
+  const converter = new QuillDeltaToHtmlConverter(result, {
+    multiLineParagraph: false,
+    inlineStyles: true
   });
-
-  return finalArr.join('');
+  return converter.convert();
 }
-
-// HTML 转义
-function escapeHtml(str: string) {
-  return str.replace(/[&<>"']/g, function (m) {
-    return ({
-      '&': '&amp;',
-      '<': '&lt;',
-      '>': '&gt;',
-      '"': '&quot;',
-      "'": '&#39;'
-    } as any)[m];
-  });
-}
-
-
+const Font = Quill.import('formats/font');
+Font.whitelist = [
+  '', 'serif', 'monospace', '宋体', '黑体', '楷体', '微软雅黑', 'Arial', 'times-new-roman'
+];
+Quill.register(Font, true);
 // 字号样式支持
 const fontSizeStyle = Quill.import('attributors/style/size');
 fontSizeStyle.whitelist = [
@@ -154,22 +125,6 @@ fontSizeStyle.whitelist = [
 ];
 Quill.register(fontSizeStyle, true);
 Quill.register('modules/cursors', QuillCursors);
-
-const toolbarOptions = {
-  container: [
-    [{ header: [1, 2, 3, 4, 5, 6, false] }],
-    ['bold', 'italic', 'underline', 'strike'],
-    ['blockquote', 'code-block'],
-    [{ list: 'ordered' }, { list: 'bullet' }, { list: 'check' }],
-    [{ script: 'sub' }, { script: 'super' }],
-    [{ align: [] }],
-    [{ indent: '-1' }, { indent: '+1' }],
-    [{ direction: 'rtl' }],
-    [{ color: [] }, { background: [] }],
-    ['link', 'image', 'video', 'formula'],
-    ['clean'],
-  ],
-};
 
 const wsUrl = 'ws://localhost:1234';
 const socketUrl = 'http://localhost:4000'; // Socket.IO 服务地址
@@ -225,6 +180,13 @@ const DocumentEditor: React.FC = () => {
 
   const [editingTitle, setEditingTitle] = useState(false);
   const [titleInput, setTitleInput] = useState(docTitle);
+  // 评论相关
+  const [comments, setComments] = useState<any[]>([]);
+  const [showCommentPanel, setShowCommentPanel] = useState(true);
+  const [showCommentModal, setShowCommentModal] = useState(false);
+  const [commentContent, setCommentContent] = useState('');
+  const [commentAnchor, setCommentAnchor] = useState<any>(null);
+  const [replyTo, setReplyTo] = useState<string | null>(null);
 
   // 获取用户和文档信息
   useEffect(() => {
@@ -359,7 +321,7 @@ const DocumentEditor: React.FC = () => {
         toolbar: isViewer ? false :  '#toolbar' ,
         cursors: true,
         history: { userOnly: true },
-
+        imageResize: {} 
     
       },
       readOnly: isViewer
@@ -439,6 +401,45 @@ const DocumentEditor: React.FC = () => {
       });
     }
   }, [cursorColor, username]);
+
+  // 导出为 docx
+  const handleExportDocx = () => {
+    if (!quillRef.current) return;
+    const html = quillRef.current.root.innerHTML;
+    const converted = htmlDocx.asBlob(`<!DOCTYPE html><html><head><meta charset="utf-8"></head><body>${html}</body></html>`);
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(converted);
+    a.download = `${docTitle || '文档'}.docx`;
+    a.click();
+  };
+
+  // 导出为 PDF
+  const handleExportPDF = async () => {
+    if (!quillRef.current) return;
+    const editorElem = quillRef.current.root;
+    // 用 html2canvas 截图
+    const canvas = await html2canvas(editorElem, { scale: 2, backgroundColor: '#fff' });
+    const imgData = canvas.toDataURL('image/png');
+    const pdf = new jsPDF('p', 'mm', 'a4');
+    const pageWidth = pdf.internal.pageSize.getWidth();
+    const pageHeight = pdf.internal.pageSize.getHeight();
+    const imgProps = pdf.getImageProperties(imgData);
+    const pdfWidth = pageWidth;
+    const pdfHeight = (imgProps.height * pdfWidth) / imgProps.width;
+    let position = 0;
+    pdf.addImage(imgData, 'PNG', 0, position, pdfWidth, pdfHeight);
+    // 多页处理
+    if (pdfHeight > pageHeight) {
+      let heightLeft = pdfHeight - pageHeight;
+      while (heightLeft > 0) {
+        position = position - pageHeight;
+        pdf.addPage();
+        pdf.addImage(imgData, 'PNG', 0, position, pdfWidth, pdfHeight);
+        heightLeft -= pageHeight;
+      }
+    }
+    pdf.save(`${docTitle || '文档'}.pdf`);
+  };
 
   const handleSave = async () => {
     if (!id || !ydocRef.current) return;
@@ -649,11 +650,48 @@ const DocumentEditor: React.FC = () => {
       socket.off('titleUpdated', handler);
     };
   }, [id]);
+  // 拉取评论
+  const fetchComments = useCallback(async () => {
+    const token = localStorage.getItem('token');
+    if (!token || !id) return;
+    const res = await axios.get(`http://localhost:4000/documents/${id}/comments`, {
+      headers: { Authorization: `Bearer ${token}` }
+    });
+    setComments(res.data);
+  }, [id]);
+  // 打开评论区时自动拉取评论
+  useEffect(() => {
+    if (showCommentPanel) {
+      fetchComments();
+    }
+  }, [showCommentPanel]);
+
+  // 监听 socket 评论变动
+  useEffect(() => {
+    if (!socketRef.current) return;
+    const socket = socketRef.current;
+    socket.on('commentsUpdated', fetchComments);
+
+  }, [fetchComments]);
+  // 评论锚点高亮
+  useEffect(() => {
+    if (!quillRef.current || !comments.length) return;
+    // 先移除所有高亮
+    if (quillRef.current) {
+      quillRef.current.formatText(0, quillRef.current.getLength(), 'background', false, 'api');
+      comments.forEach(c => {
+        if (c.anchor && !c.resolved) {
+          quillRef.current!.formatText(c.anchor.index, c.anchor.length, 'background', '#ffe58f', 'api');
+        }
+      });
+    }
+  }, [comments]);
 
   return (
     <div>
       {/* 第一排：居中对称，左侧本人+光标颜色，右侧在线用户 */}
       <div
+        className="editor-header-users"
         style={{
           display: 'flex',
           alignItems: 'center',
@@ -740,6 +778,7 @@ const DocumentEditor: React.FC = () => {
 
       {/* 第二排：左侧图标+标题，右侧按钮 */}
       <div
+        className="editor-header-title"
         style={{
           display: 'flex',
           alignItems: 'flex-end',
@@ -865,23 +904,25 @@ const DocumentEditor: React.FC = () => {
             </Button>
           )}
           {/* 历史版本按钮 */}
-          <Button
-            size="middle"
-            icon={<HistoryOutlined />}
-            style={{
-              borderRadius: 6,
-              fontWeight: 500,
-              fontSize: 15,
-              padding: '0 18px',
-              height: 36,
-              background: '#f5f5f5',
-              border: '1.5px solid #aaa',
-              color: '#333',
-            }}
-            onClick={openHistoryDrawer}
-          >
-            历史版本
-          </Button>
+          {!isViewer && (
+            <Button
+              size="middle"
+              icon={<HistoryOutlined />}
+              style={{
+                borderRadius: 6,
+                fontWeight: 500,
+                fontSize: 15,
+                padding: '0 18px',
+                height: 36,
+                background: '#f5f5f5',
+                border: '1.5px solid #aaa',
+                color: '#333',
+              }}
+              onClick={openHistoryDrawer}
+            >
+              历史版本
+            </Button>
+          )}
           {!isViewer && (
             <Button
               type="primary"
@@ -899,6 +940,36 @@ const DocumentEditor: React.FC = () => {
               {saving ? '保存中...' : '保存'}
             </Button>
           )}
+          <Dropdown
+            overlay={
+              <Menu>
+                <Menu.Item key="docx" onClick={handleExportDocx}>
+                  导出为 docx
+                </Menu.Item>
+                <Menu.Item key="pdf" onClick={handleExportPDF}>
+                  导出为 PDF
+                </Menu.Item>
+              </Menu>
+            }
+            placement="bottomRight"
+            trigger={['click']}
+          >
+            <Button
+              size="middle"
+              style={{
+                borderRadius: 6,
+                fontWeight: 500,
+                fontSize: 15,
+                padding: '0 18px',
+                height: 36,
+                background: '#f5f5f5',
+                border: '1.5px solid #aaa',
+                color: '#333',
+              }}
+            >
+              导出 <DownOutlined />
+            </Button>
+          </Dropdown>
         </div>
       </div>
 
@@ -906,6 +977,7 @@ const DocumentEditor: React.FC = () => {
       {!isViewer && (
         <div
           id="toolbar"
+          className="editor-toolbar"
           style={{
             margin: '18px auto 10px auto',
             maxWidth: 794,
@@ -917,54 +989,96 @@ const DocumentEditor: React.FC = () => {
             alignItems: 'center',
             justifyContent: 'center',
             minHeight: 48,
+            gap: 6
           }}
         >
-          <select className="ql-header" defaultValue="">
-            <option value="">正文</option>
-            <option value="1">标题1</option>
-            <option value="2">标题2</option>
-            <option value="3">标题3</option>
-            <option value="4">标题4</option>
-            <option value="5">标题5</option>
-            <option value="6">标题6</option>
-          </select>
-          <button className="ql-bold" />
-          <button className="ql-italic" />
-          <button className="ql-underline" />
-          <button className="ql-strike" />
-          <button className="ql-blockquote" />
-          <button className="ql-code-block" />
-          <button className="ql-list" value="ordered" />
-          <button className="ql-list" value="bullet" />
-          <button className="ql-list" value="check" />
-          <button className="ql-script" value="sub" />
-          <button className="ql-script" value="super" />
-          <button className="ql-align" value="" />
-          <button className="ql-align" value="center" />
-          <button className="ql-align" value="right" />
-          <button className="ql-align" value="justify" />
-          <button className="ql-indent" value="-1" />
-          <button className="ql-indent" value="+1" />
-          <button className="ql-direction" value="rtl" />
-          <select className="ql-size" defaultValue="16px">
-            <option value="12px">12px</option>
-            <option value="14px">14px</option>
-            <option value="16px">16px</option>
-            <option value="18px">18px</option>
-            <option value="20px">20px</option>
-            <option value="24px">24px</option>
-            <option value="28px">28px</option>
-            <option value="32px">32px</option>
-            <option value="36px">36px</option>
-          </select>
-          <select className="ql-color" />
-          <select className="ql-background" />
-          <button className="ql-link" />
-          <button className="ql-image" />
-          <button className="ql-video" />
-          <button className="ql-formula" />
-          {/* <button className="ql-table" title="插入表格"></button> */}
-          <button className="ql-clean" />
+          <Tooltip title="标题/正文">
+            <select className="ql-header" defaultValue="" style={{ minWidth: 70 }}>
+              <option value="">正文</option>
+              <option value="1">标题1</option>
+              <option value="2">标题2</option>
+              <option value="3">标题3</option>
+              <option value="4">标题4</option>
+              <option value="5">标题5</option>
+              <option value="6">标题6</option>
+            </select>
+          </Tooltip>
+          <Tooltip title="字体">
+            <select className="ql-font" defaultValue="" style={{ minWidth: 90 }}>
+              <option value="">默认字体</option>
+              <option value="serif" style={{ fontFamily: 'serif' }}>衬线</option>
+              <option value="monospace" style={{ fontFamily: 'monospace' }}>等宽</option>
+              <option value="宋体" style={{ fontFamily: 'SimSun' }}>宋体</option>
+              <option value="黑体" style={{ fontFamily: 'SimHei' }}>黑体</option>
+              <option value="楷体" style={{ fontFamily: 'KaiTi' }}>楷体</option>
+              <option value="微软雅黑" style={{ fontFamily: 'Microsoft YaHei' }}>微软雅黑</option>
+              <option value="Arial" style={{ fontFamily: 'Arial' }}>Arial</option>
+              <option value="times-new-roman" style={{ fontFamily: 'Times New Roman' }}>Times New Roman</option>
+            </select>
+          </Tooltip>
+          <Tooltip title="字号">
+            <select className="ql-size" defaultValue="16px" style={{ minWidth: 70 }}>
+              <option value="10px">10px</option>
+              <option value="12px">12px</option>
+              <option value="14px">14px</option>
+              <option value="16px">16px</option>
+              <option value="18px">18px</option>
+              <option value="20px">20px</option>
+              <option value="24px">24px</option>
+              <option value="28px">28px</option>
+              <option value="32px">32px</option>
+              <option value="36px">36px</option>
+              <option value="48px">48px</option>
+              <option value="56px">56px</option>
+              <option value="72px">72px</option>
+            </select>
+          </Tooltip>
+          <Tooltip title="加粗"><button className="ql-bold" /></Tooltip>
+          <Tooltip title="斜体"><button className="ql-italic" /></Tooltip>
+          <Tooltip title="下划线"><button className="ql-underline" /></Tooltip>
+          <Tooltip title="删除线"><button className="ql-strike" /></Tooltip>
+          <Tooltip title="上标"><button className="ql-script" value="super" /></Tooltip>
+          <Tooltip title="下标"><button className="ql-script" value="sub" /></Tooltip>
+          <Tooltip title="引用"><button className="ql-blockquote" /></Tooltip>
+          <Tooltip title="代码块"><button className="ql-code-block" /></Tooltip>
+          <Tooltip title="有序列表"><button className="ql-list" value="ordered" /></Tooltip>
+          <Tooltip title="无序列表"><button className="ql-list" value="bullet" /></Tooltip>
+          <Tooltip title="任务列表"><button className="ql-list" value="check" /></Tooltip>
+          <Tooltip title="左对齐"><button className="ql-align" value="" /></Tooltip>
+          <Tooltip title="居中"><button className="ql-align" value="center" /></Tooltip>
+          <Tooltip title="右对齐"><button className="ql-align" value="right" /></Tooltip>
+          <Tooltip title="两端对齐"><button className="ql-align" value="justify" /></Tooltip>
+          <Tooltip title="减少缩进"><button className="ql-indent" value="-1" /></Tooltip>
+          <Tooltip title="增加缩进"><button className="ql-indent" value="+1" /></Tooltip>
+          <Tooltip title="从右到左"><button className="ql-direction" value="rtl" /></Tooltip>
+          <Tooltip title="字体颜色"><select className="ql-color" /></Tooltip>
+          <Tooltip title="背景色"><select className="ql-background" /></Tooltip>
+          <Tooltip title="插入链接"><button className="ql-link" /></Tooltip>
+          <Tooltip title="插入图片">
+            <button className="ql-image" style={{ fontSize: 20, padding: '0 6px' }}>
+              <img
+                src="https://cdn.jsdelivr.net/gh/twitter/twemoji@14.0.2/assets/svg/1f5bc.svg"
+                alt="图片"
+                style={{ width: 18, height: 18, verticalAlign: 'middle', pointerEvents: 'none' }}
+              />
+            </button>
+          </Tooltip>
+          <Tooltip title="插入公式"><button className="ql-formula" /></Tooltip>
+          <Tooltip title="清除格式"><button className="ql-clean" /></Tooltip>
+          <Tooltip title="插入评论">
+            <button
+              className="ql-insert-comment"
+              onClick={() => {
+                if (!quillRef.current) return;
+                const range = quillRef.current.getSelection();
+                if (!range || range.length === 0) return message.warning('请先选中要评论的内容');
+                setCommentAnchor(range);
+                setReplyTo(null);
+                setShowCommentModal(true);
+              }}
+              style={{ fontSize: 18, padding: '0 6px' }}
+            >💬</button>
+          </Tooltip>
         </div>
       )}
 
@@ -1082,6 +1196,96 @@ const DocumentEditor: React.FC = () => {
           )}
         />
       </Drawer>
+      <Drawer
+        title="评论区"
+        placement="right"
+        width={380}
+        open={showCommentPanel}
+        onClose={() => setShowCommentPanel(false)}
+        mask={false}
+      >
+        <Button size="small" onClick={() => setShowCommentPanel(false)} style={{ marginBottom: 8 }}>收起</Button>
+        {comments.filter(c => !c.parent).map(c => (
+          <div key={c._id} style={{ marginBottom: 18, borderBottom: '1px solid #eee', paddingBottom: 8 }}>
+            <div>
+              <b>{c.author?.username || '匿名'}</b> <span style={{ color: '#888', fontSize: 12 }}>{new Date(c.createdAt).toLocaleString()}</span>
+              {c.resolved && <span style={{ color: '#52c41a', marginLeft: 8 }}>已处理</span>}
+            </div>
+            <div style={{ margin: '6px 0' }}>{c.content}</div>
+            <div>
+              <Button size="small" onClick={() => { setReplyTo(c._id); setShowCommentModal(true); }}>回复</Button>
+              <Button size="small" onClick={async () => {
+                const token = localStorage.getItem('token');
+                await axios.put(
+                  `http://localhost:4000/documents/${id}/comments/${c._id}/resolve`,
+                  {},
+                  { headers: { Authorization: `Bearer ${token}` } }
+                );
+                socketRef.current?.emit('commentsUpdated', { docId: id });
+                fetchComments();
+              }}>标记已处理</Button>
+              {/* 定位到锚点 */}
+              <Button size="small" onClick={() => {
+                if (!quillRef.current || !c.anchor) return;
+                quillRef.current.setSelection(c.anchor.index, c.anchor.length, 'user');
+              }}>定位</Button>
+            </div>
+            {/* 嵌套回复 */}
+            {comments.filter(r => r.parent === c._id).map(r => (
+              <div key={r._id} style={{ marginLeft: 18, marginTop: 8, borderLeft: '2px solid #eee', paddingLeft: 8 }}>
+                <div>
+                  <b>{r.author?.username || '匿名'}</b> <span style={{ color: '#888', fontSize: 12 }}>{new Date(r.createdAt).toLocaleString()}</span>
+                  {r.resolved && <span style={{ color: '#52c41a', marginLeft: 8 }}>已处理</span>}
+                </div>
+                <div style={{ margin: '6px 0' }}>{r.content}</div>
+              </div>
+            ))}
+          </div>
+        ))}
+      </Drawer>
+      <Button
+        style={{
+          position: 'fixed', right: 12, top: 220, zIndex: 2000, display: showCommentPanel ? 'none' : 'block'
+        }}
+        onClick={() => setShowCommentPanel(true)}
+      >评论区</Button>
+      <Modal
+        open={showCommentModal}
+        title={replyTo ? '回复评论' : '插入评论'}
+        onCancel={() => setShowCommentModal(false)}
+        onOk={async () => {
+          const token = localStorage.getItem('token');
+          if (!token || !id) return;
+          if (replyTo) {
+            // 回复
+            await axios.post(
+              `http://localhost:4000/documents/${id}/comments/${replyTo}/reply`,
+              { content: commentContent },
+              { headers: { Authorization: `Bearer ${token}` } }
+            );
+          } else {
+            // 新评论
+            await axios.post(
+              `http://localhost:4000/documents/${id}/comments`,
+              { content: commentContent, anchor: commentAnchor },
+              { headers: { Authorization: `Bearer ${token}` } }
+            );
+          }
+          setCommentContent('');
+          setShowCommentModal(false);
+          setReplyTo(null);
+          // 通知 socket
+          socketRef.current?.emit('commentsUpdated', { docId: id });
+          fetchComments();
+        }}
+      >
+        <Input.TextArea
+          value={commentContent}
+          onChange={e => setCommentContent(e.target.value)}
+          rows={4}
+          placeholder="请输入评论内容"
+        />
+      </Modal>
       <Modal
         open={!!compareContent}
         title="历史版本对比"

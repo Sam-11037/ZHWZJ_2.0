@@ -19,7 +19,6 @@ setPersistence({
       const res = await axios.get(`http://localhost:4000/documents/${docId}`, {
         headers: { 'X-Internal-Secret': process.env.YWS_INTERNAL_SECRET }
       });
-      console.log('[y-websocket] bindState: 拉取数据库内容', docId, '密钥:', process.env.YWS_INTERNAL_SECRET);
       const dbContent = res.data.content;
       let ops = [];
       if (dbContent) {
@@ -31,11 +30,9 @@ setPersistence({
       }
       if (ops.length > 0) {
         const ytext = ydoc.getText('quill');
-        console.log('[y-websocket] bindState: ytext.length before', ytext.length);
+
         ytext.delete(0, ytext.length);
-        console.log('[y-websocket] bindState: after delete');
         ytext.applyDelta(ops);
-        console.log(`[y-websocket] bindState: 用数据库内容初始化 Yjs 文档: ${docId}`);
       } else {
         console.log('[y-websocket] bindState: 没有可用的 ops 数据', dbContent);
       }

@@ -38,3 +38,60 @@
   font-family: 'Microsoft YaHei', 'SimSun', Arial, sans-serif;
   box-sizing: border-box;
 }
+/* 吸顶用户栏 */
+.editor-header-users {
+  position: sticky;
+  top: 0;
+  z-index: 100;
+  background: #fff;
+  box-shadow: 0 2px 8px #f5f5f5;
+}
+
+/* 吸顶标题栏 */
+.editor-header-title {
+  position: sticky;
+  top: 56px; /* 用户栏高度 */
+  z-index: 101;
+  background: #fff;
+  box-shadow: 0 2px 8px #f5f5f5;
+}
+
+/* 吸顶工具栏 */
+.editor-toolbar {
+  position: sticky;
+  top: 120px; /* 用户栏+标题栏高度 */
+  z-index: 102;
+  background: #fff;
+  box-shadow: 0 2px 8px #f5f5f5;
+  transition: box-shadow 0.2s;
+}
+.ql-editor img {
+  max-width: 100%;
+  height: auto;
+  display: block;
+  margin: 8px 0;
+}
+/* 图片对齐样式 */
+.ql-align-center img {
+  display: block;
+  margin-left: auto;
+  margin-right: auto;
+}
+.ql-align-right img {
+  display: block;
+  margin-left: auto;
+  margin-right: 0;
+}
+.ql-align-left img {
+  display: block;
+  margin-left: 0;
+  margin-right: auto;
+}
+.ql-font-serif { font-family: serif; }
+.ql-font-monospace { font-family: monospace; }
+.ql-font-宋体 { font-family: SimSun, serif; }
+.ql-font-黑体 { font-family: SimHei, sans-serif; }
+.ql-font-楷体 { font-family: KaiTi, serif; }
+.ql-font-microsoft-yahei { font-family: 'Microsoft YaHei', sans-serif; }
+.ql-font-Arial { font-family: Arial, sans-serif; }
+.ql-font-times-new-roman { font-family: 'Times New Roman', serif; }

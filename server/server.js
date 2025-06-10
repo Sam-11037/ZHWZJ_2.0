@@ -84,7 +84,6 @@ app.post('/login', async (req, res) => {
 // JWT 验证中间件：验证 sessionId 是否匹配
 const verifyToken = (req, res, next) => {
   if (req.header('X-Internal-Secret') === process.env.YWS_INTERNAL_SECRET) {
-    console.log('内部密钥校验通过');
     return next();
   }
   const token = req.header('Authorization')?.split(' ')[1];
@@ -372,6 +371,113 @@ app.delete('/documents/:id', verifyToken, async (req, res) => {
   }
 });
 
+// === 获取评论列表 ===
+app.get('/documents/:id/comments', verifyToken, async (req, res) => {
+  try {
+    const doc = await Document.findById(req.params.id)
+      .populate('comments.author', 'username avatar');
+    if (!doc) return res.status(404).json({ message: 'Document not found' });
+    // 权限校验（只要能访问文档即可）
+    const isOwner = doc.owner.toString() === req.userId;
+    const isEditor = doc.editors.some(id => id.toString() === req.userId);
+    const isViewer = doc.viewers.some(id => id.toString() === req.userId);
+    if (!(isOwner || isEditor || isViewer)) {
+      return res.status(403).json({ message: 'Access denied' });
+    }
+    res.json(doc.comments || []);
+  } catch (err) {
+    res.status(500).json({ message: 'Error fetching comments', error: err.message });
+  }
+});
+
+// === 新增评论 ===
+app.post('/documents/:id/comments', verifyToken, async (req, res) => {
+  const { content, anchor, mentions, parent } = req.body;
+  if (!content || !anchor) return res.status(400).json({ message: '内容和锚点不能为空' });
+  try {
+    const doc = await Document.findById(req.params.id);
+    if (!doc) return res.status(404).json({ message: 'Document not found' });
+    // 权限校验
+    const isOwner = doc.owner.toString() === req.userId;
+    const isEditor = doc.editors.some(id => id.toString() === req.userId);
+    if (!(isOwner || isEditor)) return res.status(403).json({ message: '无权限评论' });
+
+    const comment = {
+      author: req.userId,
+      content,
+      anchor,
+      parent: parent || null,
+      mentions: mentions || [],
+      createdAt: new Date(),
+      resolved: false
+    };
+    doc.comments.push(comment);
+    await doc.save();
+
+    // Socket 广播
+    io.to(doc._id.toString()).emit('commentsUpdated');
+    res.status(201).json({ message: '评论已添加' });
+  } catch (err) {
+    res.status(500).json({ message: 'Error adding comment', error: err.message });
+  }
+});
+
+// === 嵌套回复评论 ===
+app.post('/documents/:id/comments/:cid/reply', verifyToken, async (req, res) => {
+  const { content } = req.body;
+  if (!content) return res.status(400).json({ message: '内容不能为空' });
+  try {
+    const doc = await Document.findById(req.params.id);
+    if (!doc) return res.status(404).json({ message: 'Document not found' });
+    // 权限校验
+    const isOwner = doc.owner.toString() === req.userId;
+    const isEditor = doc.editors.some(id => id.toString() === req.userId);
+    if (!(isOwner || isEditor)) return res.status(403).json({ message: '无权限回复' });
+
+    // 检查父评论存在
+    const parentComment = doc.comments.id(req.params.cid);
+    if (!parentComment) return res.status(404).json({ message: '父评论不存在' });
+
+    const reply = {
+      author: req.userId,
+      content,
+      parent: req.params.cid,
+      createdAt: new Date(),
+      resolved: false
+    };
+    doc.comments.push(reply);
+    await doc.save();
+
+    io.to(doc._id.toString()).emit('commentsUpdated');
+    res.status(201).json({ message: '回复已添加' });
+  } catch (err) {
+    res.status(500).json({ message: 'Error replying comment', error: err.message });
+  }
+});
+
+// === 标记评论为已处理 ===
+app.put('/documents/:id/comments/:cid/resolve', verifyToken, async (req, res) => {
+  try {
+    const doc = await Document.findById(req.params.id);
+    if (!doc) return res.status(404).json({ message: 'Document not found' });
+    // 权限校验
+    const isOwner = doc.owner.toString() === req.userId;
+    const isEditor = doc.editors.some(id => id.toString() === req.userId);
+    if (!(isOwner || isEditor)) return res.status(403).json({ message: '无权限操作' });
+
+    const comment = doc.comments.id(req.params.cid);
+    if (!comment) return res.status(404).json({ message: '评论不存在' });
+
+    comment.resolved = true;
+    await doc.save();
+
+    io.to(doc._id.toString()).emit('commentsUpdated');
+    res.json({ message: '评论已标记为已处理' });
+  } catch (err) {
+    res.status(500).json({ message: 'Error resolving comment', error: err.message });
+  }
+});
+
 // 设置 multer 存储配置
 const storage = multer.diskStorage({
   destination: (req, file, cb) => {
@@ -433,6 +539,7 @@ io.on('connection', (socket) => {
     })));
   });
 
+
   // 离开文档房间
   socket.on('leaveDoc', ({ docId, userId }) => {
     if (onlineUsersMap[docId]) {
@@ -463,6 +570,10 @@ io.on('connection', (socket) => {
   socket.on('titleUpdated', ({ docId, title }) => {
     io.to(docId).emit('titleUpdated', { docId, title });
   });
+  // 新增：前端主动通知时转发给房间所有人
+  socket.on('commentsUpdated', ({ docId }) => {
+    io.to(docId).emit('commentsUpdated');
+  });
 
   // 断开连接时自动移除
   socket.on('disconnect', () => {
@@ -481,7 +592,7 @@ io.on('connection', (socket) => {
 });
 
 // === 服务器启动 ===
-const PORT = process.env.PORT || 4000;
+const PORT = process.env.PORT;
 server.listen(PORT, () => {
   console.log(`Server + Socket.IO running at http://localhost:${PORT}`);
 });

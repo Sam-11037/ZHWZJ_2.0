@@ -113,7 +113,7 @@ app.post('/register', async (req, res) => {
     if (existingUser) return res.status(400).json({ message: 'Username already exists' });
 
     const hashedPassword = await bcrypt.hash(password, 10);
-    // 新增：注册时生成 sessionId
+    // 注册时生成 sessionId
     const sessionId = new mongoose.Types.ObjectId();
     const user = new User({ username, password: hashedPassword, sessionId });
     await user.save();
@@ -233,8 +233,8 @@ app.get('/documents', verifyToken, async (req, res) => {
       documentCollUser: req.userId
     })
       .populate('owner', 'username avatar')
-      .populate('editors', 'username')   // 加上这行
-      .populate('viewers', 'username');  // 加上这行
+      .populate('editors', 'username')   
+      .populate('viewers', 'username');  
     res.json(docs);
   } catch (err) {
     res.status(500).json({ message: 'Error fetching documents', error: err.message });
@@ -332,7 +332,7 @@ app.put('/documents/:id', verifyToken, async (req, res) => {
         editor: req.userId,
         editedAt: new Date(),
         contentSnapshot: content,
-        ySnapshot: ySnapshot || undefined // 新增
+        ySnapshot: ySnapshot || undefined 
       });
       doc.content = content;
       doc.lastEditedBy = req.userId;
@@ -397,10 +397,10 @@ app.post('/documents/:id/comments', verifyToken, async (req, res) => {
   try {
     const doc = await Document.findById(req.params.id);
     if (!doc) return res.status(404).json({ message: 'Document not found' });
-    // 权限校验
-    const isOwner = doc.owner.toString() === req.userId;
-    const isEditor = doc.editors.some(id => id.toString() === req.userId);
-    if (!(isOwner || isEditor)) return res.status(403).json({ message: '无权限评论' });
+    // 只校验协作者身份
+    if (!doc.documentCollUser.some(id => id.toString() === req.userId)) {
+      return res.status(403).json({ message: '无权限评论' });
+    }
 
     const comment = {
       author: req.userId,
@@ -429,11 +429,10 @@ app.post('/documents/:id/comments/:cid/reply', verifyToken, async (req, res) => 
   try {
     const doc = await Document.findById(req.params.id);
     if (!doc) return res.status(404).json({ message: 'Document not found' });
-    // 权限校验
-    const isOwner = doc.owner.toString() === req.userId;
-    const isEditor = doc.editors.some(id => id.toString() === req.userId);
-    if (!(isOwner || isEditor)) return res.status(403).json({ message: '无权限回复' });
-
+    // 只校验协作者身份
+    if (!doc.documentCollUser.some(id => id.toString() === req.userId)) {
+      return res.status(403).json({ message: '无权限回复' });
+    }
     // 检查父评论存在
     const parentComment = doc.comments.id(req.params.cid);
     if (!parentComment) return res.status(404).json({ message: '父评论不存在' });
@@ -460,10 +459,10 @@ app.put('/documents/:id/comments/:cid/resolve', verifyToken, async (req, res) =>
   try {
     const doc = await Document.findById(req.params.id);
     if (!doc) return res.status(404).json({ message: 'Document not found' });
-    // 权限校验
-    const isOwner = doc.owner.toString() === req.userId;
-    const isEditor = doc.editors.some(id => id.toString() === req.userId);
-    if (!(isOwner || isEditor)) return res.status(403).json({ message: '无权限操作' });
+    // 只校验协作者身份
+    if (!doc.documentCollUser.some(id => id.toString() === req.userId)) {
+      return res.status(403).json({ message: '无权限操作' });
+    }
 
     const comment = doc.comments.id(req.params.cid);
     if (!comment) return res.status(404).json({ message: '评论不存在' });
@@ -526,7 +525,6 @@ io.on('connection', (socket) => {
   // 加入文档房间
   socket.on('joinDoc', ({ docId, userId, username, color }) => {
     socket.join(docId);
-    console.log(`[joinDoc] user:${userId} socket:${socket.id} join docId:${docId}`);
     if (!onlineUsersMap[docId]) onlineUsersMap[docId] = [];
     // 避免重复
     if (!onlineUsersMap[docId].some(u => u.userId === userId)) {
@@ -553,7 +551,7 @@ io.on('connection', (socket) => {
     socket.leave(docId);
   });
 
-  // 新增：处理颜色变更
+  // 处理颜色变更
   socket.on('updateColor', ({ docId, userId, color }) => {
     if (onlineUsersMap[docId]) {
       onlineUsersMap[docId] = onlineUsersMap[docId].map(u =>
@@ -566,11 +564,11 @@ io.on('connection', (socket) => {
       })));
     }
   });
-  // 新增：文档标题修改事件转发
+  // 文档标题修改事件转发
   socket.on('titleUpdated', ({ docId, title }) => {
     io.to(docId).emit('titleUpdated', { docId, title });
   });
-  // 新增：前端主动通知时转发给房间所有人
+  // 前端主动通知时转发给房间所有人
   socket.on('commentsUpdated', ({ docId }) => {
     io.to(docId).emit('commentsUpdated');
   });

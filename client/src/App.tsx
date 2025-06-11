@@ -7,9 +7,8 @@ import Dashboard from './Dashboard';
 import DocumentEditor from './DocumentEditor';
 import PersonalCenter from './PersonalCenter';
 import axios from 'axios';
-import SheetEditor from './SheetEditor'; // 你需要新建
-import MarkdownEditor from './MarkdownEditor'; // 你需要新建
-
+import SheetEditor from './SheetEditor'; 
+import MarkdownEditor from './MarkdownEditor'; 
 const App: React.FC = () => {
   const [isAuthenticated, setIsAuthenticated] = useState<boolean>(false);
   const location = useLocation();
@@ -31,7 +30,7 @@ const App: React.FC = () => {
         localStorage.removeItem('token_expire');
         setIsAuthenticated(false);
 
-        // 新增：如果是“Session expired or invalid”，弹窗提示
+        // 如果是“Session expired or invalid”，弹窗提示
         const msg = error?.response?.data?.message;
         if (msg === 'Session expired or invalid') {
           Modal.warning({

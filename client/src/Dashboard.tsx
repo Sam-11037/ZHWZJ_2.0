@@ -268,6 +268,16 @@ const Dashboard: React.FC = () => {
           locale={{ emptyText: '暂无文档' }}
           renderItem={(doc) => {
             const role = getRole(doc);
+            //根据 format 跳转
+            const handleGoEdit = () => {
+              if (doc.format === 'docx' || !doc.format) {
+                navigate(`/edit/${doc._id}`);
+              } else if (doc.format === 'xlsx') {
+                navigate(`/sheet/${doc._id}`);
+              } else if (doc.format === 'md') {
+                navigate(`/md/${doc._id}`);
+              }
+            };
             return (
               <List.Item key={doc._id}>
                 <div
@@ -313,12 +323,12 @@ const Dashboard: React.FC = () => {
                   </div>
                   <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end' }}>
                     {(role === 'owner' || role === 'editor') && (
-                      <Button type="primary" size="small" style={{ borderRadius: 6 }} onClick={() => navigate(`/edit/${doc._id}`)}>
+                      <Button type="primary" size="small" style={{ borderRadius: 6 }} onClick={handleGoEdit}>
                         编辑
                       </Button>
                     )}
                     {role === 'viewer' && (
-                      <Button size="small" style={{ borderRadius: 6 }} onClick={() => navigate(`/edit/${doc._id}`)}>
+                      <Button size="small" style={{ borderRadius: 6 }} onClick={handleGoEdit}>
                         查看
                       </Button>
                     )}

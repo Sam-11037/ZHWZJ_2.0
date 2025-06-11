@@ -5,7 +5,7 @@ import './index.css';
 import App from './App';
 import reportWebVitals from './reportWebVitals';
 import { BrowserRouter } from 'react-router-dom';  // 引入 BrowserRouter
-
+import 'katex/dist/katex.min.css';
 const root = ReactDOM.createRoot(
   document.getElementById('root') as HTMLElement
 );
@@ -18,5 +18,4 @@ root.render(
   </React.StrictMode>
 );
 
-// 如果想开始衡量应用性能，可以传递一个函数来记录结果
 reportWebVitals();

@@ -7,34 +7,45 @@ import { WebsocketProvider } from 'y-websocket';
 import * as Y from 'yjs';
 import axios from 'axios';
 import { useParams, useNavigate } from 'react-router-dom';
-import { io, Socket } from 'socket.io-client'; // 新增
+import { io, Socket } from 'socket.io-client'; 
 import { Modal, Select, Button, message, Drawer, Radio, Input,Form } from 'antd'; // 替换 Modal, Select
 import { ExclamationCircleOutlined, DeleteOutlined } from '@ant-design/icons';
 import './word-page.css';
-import { List, Tooltip } from 'antd';
+import { List, Tooltip ,Dropdown, Menu} from 'antd';
 import { HistoryOutlined, RollbackOutlined, DiffOutlined } from '@ant-design/icons';
 import DiffMatchPatch from 'diff-match-patch';
 import { QuillDeltaToHtmlConverter } from 'quill-delta-to-html';
 import Delta from 'quill-delta';
-import { Dropdown, Menu } from 'antd';
 import { DownOutlined } from '@ant-design/icons';
 import ImageResize from 'quill-image-resize-module-plus';
 import htmlDocx from 'html-docx-js/dist/html-docx';
 import jsPDF from 'jspdf';
 import html2canvas from 'html2canvas';
+
+
 Quill.register('modules/imageResize', ImageResize);
 // 获取内容
 function getPlainTextFromDelta(delta: any) {
   if (!delta) return '';
+  // 如果 delta 为空（null/undefined），直接返回空字符串
+
   if (typeof delta === 'string') return delta;
+  // 如果 delta 本身就是字符串，直接返回
+
   // 兼容直接是 Delta 数组的情况
   if (Array.isArray(delta)) {
     return delta.map((op: any) => typeof op.insert === 'string' ? op.insert : '').join('');
+    // 如果 delta 是数组（即 ops 数组），遍历每个 op，
+    // 如果 op.insert 是字符串就取出来，否则取空字符串，最后拼接成一个字符串
   }
+
   if (Array.isArray(delta.ops)) {
     return delta.ops.map((op: any) => typeof op.insert === 'string' ? op.insert : '').join('');
+    // 如果 delta 是对象且有 ops 数组，遍历 ops，取出所有字符串 insert，拼接成字符串
   }
+
   return '';
+  // 其它情况返回空字符串
 }
 function deltaToHtml(delta: any) {
   if (!delta) return '';
@@ -43,75 +54,167 @@ function deltaToHtml(delta: any) {
   const converter = new QuillDeltaToHtmlConverter(ops, {});
   return converter.convert();
 }
-// 富文本 diff
-function richDiffHtml(oldDelta: any, newDelta: any) {
-  const oldOps = Array.isArray(oldDelta) ? oldDelta : oldDelta?.ops || [];
-  const newOps = Array.isArray(newDelta) ? newDelta : newDelta?.ops || [];
-
-  const deltaA = new Delta(oldOps);
-  const deltaB = new Delta(newOps);
-  const diff = deltaA.diff(deltaB);
-
-  let oldIdx = 0, newIdx = 0;
-  let result: any[] = [];
-
-  (diff.ops || []).forEach(op => {
-    // 先处理删除
-    if (op.delete !== undefined) {
-      const delLen = typeof op.delete === 'number' ? op.delete : 0;
-      for (let i = 0; i < delLen; i++) {
-        if (oldOps[oldIdx]) {
-          result.push({
-            insert: oldOps[oldIdx].insert,
-            attributes: {
-              ...(oldOps[oldIdx].attributes || {}),
-              style: [
-                (oldOps[oldIdx].attributes?.style || ''),
-                'color:#e74c3c;text-decoration:line-through;'
-              ].filter(Boolean).join(';')
-            }
-          });
+function isAttributesEqual(a: any, b: any) {
+  const keysA = Object.keys(a || {}).filter(k => a[k] !== undefined && a[k] !== null);
+  const keysB = Object.keys(b || {}).filter(k => b[k] !== undefined && b[k] !== null);
+  if (keysA.length !== keysB.length) return false;
+  for (const key of keysA) {
+    if (a[key] !== b[key]) return false;
+  }
+  return true;
+}
+function isTextOpsFormatEqual(opsA: any[], opsB: any[]): boolean {
+  // 只比较 insert 为字符串的 op
+  const textOpsA = (opsA || []).filter(op => typeof op.insert === 'string');
+  const textOpsB = (opsB || []).filter(op => typeof op.insert === 'string');
+  if (textOpsA.length !== textOpsB.length) return false;
+  for (let i = 0; i < textOpsA.length; i++) {
+    const a = textOpsA[i];
+    const b = textOpsB[i];
+    if (a.insert !== b.insert) return false;
+    if (!isAttributesEqual(a.attributes, b.attributes)) return false;
+  }
+  return true;
+}
+function trimLineEnd(str: string) {
+  // 去除所有末尾换行和空白
+  return (str || '').replace(/[\n\r\s]+$/, '');
+}
+// 新增：行级diff工具
+function splitDeltaByLine(delta: any) {
+  // 返回 [{ops, text, start, length}]
+  const ops = Array.isArray(delta) ? delta : delta?.ops || [];
+  let result: { ops: any[], text: string, start: number, length: number }[] = [];
+  let buf: any[] = [];
+  let text = '';
+  let start = 0;
+  let idx = 0;
+  for (const op of ops) {
+    if (typeof op.insert === 'string') {
+      let remain = op.insert;
+      while (remain.length) {
+        const nl = remain.indexOf('\n');
+        if (nl === -1) {
+          buf.push({ ...op, insert: remain });
+          text += remain;
+          idx += remain.length;
+          remain = '';
+        } else {
+          // 到行尾
+          const seg = remain.slice(0, nl + 1);
+          buf.push({ ...op, insert: seg });
+          text += seg;
+          result.push({ ops: buf, text, start, length: idx + nl + 1 - start });
+          buf = [];
+          text = '';
+          start = idx + nl + 1;
+          idx += nl + 1;
+          remain = remain.slice(nl + 1);
         }
-        oldIdx++;
+      }
+    } else {
+      // 非字符串（如图片、公式等），直接作为一段
+      buf.push(op);
+    }
+  }
+  if (buf.length) {
+    result.push({ ops: buf, text, start, length: idx - start });
+  }
+  return result;
+}
+function isImageOp(op: any) {
+  return typeof op.insert === 'object' && op.insert && op.insert.image;
+}
+function renderImageOp(op: any) {
+  if (isImageOp(op)) {
+    const src = op.insert.image;
+    return `<img src="${src}" alt="图片" style="max-width:120px;max-height:80px;vertical-align:middle;box-shadow:0 1px 4px #ccc;margin:0 4px;" />`;
+  }
+  return '';
+}
+
+// 行内字符diff高亮
+function diffCharsHtml(oldText: string, newText: string) {
+  const dmp = new DiffMatchPatch();
+  const diffs = dmp.diff_main(oldText, newText);
+  dmp.diff_cleanupSemantic(diffs);
+  let html = '';
+  for (const [op, data] of diffs) {
+    if (op === DiffMatchPatch.DIFF_INSERT) {
+      html += `<span style="background:#d4fcdc;color:#388e3c;">${data}</span>`;
+    } else if (op === DiffMatchPatch.DIFF_DELETE) {
+      html += `<span style="background:#ffeaea;color:#e74c3c;text-decoration:line-through;">${data}</span>`;
+    } else {
+      html += data;
+    }
+  }
+  return html;
+}
+
+// 判断图片内容是否一致
+function isImagesEqual(imagesA: any[], imagesB: any[]) {
+  if (imagesA.length !== imagesB.length) return false;
+  for (let i = 0; i < imagesA.length; i++) {
+    if (imagesA[i]?.insert?.image !== imagesB[i]?.insert?.image) return false;
+  }
+  return true;
+}
+
+function lineDiffHtml(oldDelta: any, newDelta: any) {
+  const oldLineObjs = splitDeltaByLine(oldDelta);
+  const newLineObjs = splitDeltaByLine(newDelta);
+  const maxLines = Math.max(oldLineObjs.length, newLineObjs.length);
+  let rightHtml: string[] = [];
+
+  for (let i = 0; i < maxLines; i++) {
+    const oldLine = oldLineObjs[i]?.ops || [];
+    const newLine = newLineObjs[i]?.ops || [];
+    const oldImages = oldLine.filter(isImageOp);
+    const newImages = newLine.filter(isImageOp);
+    const oldText = getPlainTextFromDelta(oldLine);
+    const newText = getPlainTextFromDelta(newLine);
+
+    // 图片删除
+    if (oldImages.length && !newImages.length) {
+      rightHtml.push(
+        `<div style="background:#ffeaea;color:#e74c3c;"><b>- </b>${oldImages.map(renderImageOp).join('')}</div>`
+      );
+    }
+    // 图片新增
+    if (!oldImages.length && newImages.length) {
+      rightHtml.push(
+        `<div style="background:#d4fcdc;color:#388e3c;"><b>+ </b>${newImages.map(renderImageOp).join('')}</div>`
+      );
+    }
+    // 图片变动
+    if (
+      oldImages.length &&
+      newImages.length &&
+      (!isImagesEqual(oldImages, newImages))
+    ) {
+      rightHtml.push(
+        `<div style="color:#1976d2;"><b>? </b>图片变动</div>`
+      );
+    }
+
+    // 文本和图片都一致且格式一致时，完整渲染
+    if (
+      trimLineEnd(oldText) === trimLineEnd(newText) &&
+      isImagesEqual(oldImages, newImages) &&
+      isTextOpsFormatEqual(oldLine, newLine)
+    ) {
+      rightHtml.push(`<div>${deltaToHtml(newLine)}</div>`);
+    } else if (oldLine.length && newLine.length) {
+      // 只要内容、格式或图片有变化，显示 ? 行
+      if (oldText || newText) {
+        rightHtml.push(
+          `<div style="color:#1976d2;"><b>? </b>${diffCharsHtml(oldText, newText)}</div>`
+        );
       }
     }
-    // 再处理保留
-    if (op.retain !== undefined) {
-      const retainLen = typeof op.retain === 'number' ? op.retain : 0;
-      for (let i = 0; i < retainLen; i++) {
-        if (newOps[newIdx]) {
-          result.push(newOps[newIdx]);
-        }
-        oldIdx++;
-        newIdx++;
-      }
-    }
-    // 最后处理新增
-    if (op.insert !== undefined) {
-      result.push({
-        insert: op.insert,
-        attributes: {
-          ...(op.attributes || {}),
-          ...(newOps[newIdx]?.attributes || {}),
-          style: [
-            (newOps[newIdx]?.attributes?.style || ''),
-            'background-color:#d4fcdc;color:#388e3c;'
-          ].filter(Boolean).join(';')
-        }
-      });
-      if (typeof op.insert === 'string') {
-        newIdx += op.insert.length;
-      } else {
-        newIdx += 1;
-      }
-    }
-  });
+  }
 
-  const converter = new QuillDeltaToHtmlConverter(result, {
-    multiLineParagraph: false,
-    inlineStyles: true
-  });
-  return converter.convert();
+  return { rightHtml };
 }
 const Font = Quill.import('formats/font');
 Font.whitelist = [
@@ -152,9 +255,8 @@ const DocumentEditor: React.FC = () => {
   const quillRef = useRef<Quill | null>(null);
   const ydocRef = useRef<Y.Doc | null>(null);
   const providerRef = useRef<WebsocketProvider | null>(null);
-  const bindingRef = useRef<QuillBinding | null>(null);
+  const bindingRef = useRef<any>(null);
 
-  // 新增
   const socketRef = useRef<Socket | null>(null);
   const [onlineUsers, setOnlineUsers] = useState<{ userId: string; username: string; color: string }[]>([]);
   const [docTitle, setDocTitle] = useState('文档');
@@ -188,6 +290,13 @@ const DocumentEditor: React.FC = () => {
   const [commentAnchor, setCommentAnchor] = useState<any>(null);
   const [replyTo, setReplyTo] = useState<string | null>(null);
 
+  // 表格相关
+  const [showTableModal, setShowTableModal] = useState(false);
+  const [tableRows, setTableRows] = useState(3);
+  const [tableCols, setTableCols] = useState(3);
+  const [tableData, setTableData] = useState<string[][]>(
+    Array.from({ length: 3 }, () => Array.from({ length: 3 }, () => ''))
+  );
   // 获取用户和文档信息
   useEffect(() => {
     const fetchUserAndDoc = async () => {
@@ -263,7 +372,7 @@ const DocumentEditor: React.FC = () => {
       }
     });
 
-    // 新增：监听权限变更
+    // 监听权限变更
     socket.on('permissionUpdated', ({ docId }) => {
       if (docId === id) {
         message.info('文档权限已变更，请刷新页面或重新进入。');
@@ -321,8 +430,8 @@ const DocumentEditor: React.FC = () => {
         toolbar: isViewer ? false :  '#toolbar' ,
         cursors: true,
         history: { userOnly: true },
-        imageResize: {} 
-    
+        imageResize: {} ,
+        
       },
       readOnly: isViewer
     });
@@ -627,6 +736,7 @@ const DocumentEditor: React.FC = () => {
       setEditingTitle(false);
       // 通知其他人（socket.io 监听 permissionUpdated 或自定义事件都可，这里复用 permissionUpdated）
       if (socketRef.current) {
+      
         socketRef.current.emit('titleUpdated', { docId: id, title: titleInput.trim() });
       }
     } catch (e: any) {
@@ -641,6 +751,7 @@ const DocumentEditor: React.FC = () => {
     if (!socketRef.current) return;
     const socket = socketRef.current;
     const handler = ({ docId: eventDocId, title }: { docId: string; title: string }) => {
+      console.log('[client] received titleUpdated', eventDocId, title);
       if (eventDocId === id && title) {
         setDocTitle(title);
       }
@@ -668,11 +779,13 @@ const DocumentEditor: React.FC = () => {
 
   // 监听 socket 评论变动
   useEffect(() => {
-    if (!socketRef.current) return;
     const socket = socketRef.current;
+    if (!socket) return;
     socket.on('commentsUpdated', fetchComments);
-
-  }, [fetchComments]);
+    return () => {
+      socket.off('commentsUpdated', fetchComments);
+    };
+  }, [fetchComments, socketRef.current]);
   // 评论锚点高亮
   useEffect(() => {
     if (!quillRef.current || !comments.length) return;
@@ -883,7 +996,7 @@ const DocumentEditor: React.FC = () => {
             <span style={{ color: '#faad14', fontSize: 18, marginLeft: 18, fontWeight: 500 }}>只读模式</span>
           )}
         </div>
-        {/* 右侧按钮（更小一点） */}
+        {/* 右侧按钮 */}
         <div style={{ display: 'flex', gap: 10 }}>
           {docInfo && docInfo.owner && userId === docInfo.owner._id && (
             <Button
@@ -970,6 +1083,24 @@ const DocumentEditor: React.FC = () => {
               导出 <DownOutlined />
             </Button>
           </Dropdown>
+            <Button
+              size="middle"
+              style={{
+                borderRadius: 6,
+                fontWeight: 500,
+                fontSize: 15,
+                padding: '0 18px',
+                height: 36,
+                background: showCommentPanel ? '#1677ff' : '#f5f5f5',
+                border: '1.5px solid #1677ff',
+                color: showCommentPanel ? '#fff' : '#1677ff',
+                marginLeft: 0
+              }}
+              onClick={() => setShowCommentPanel(true)}
+              disabled={showCommentPanel}
+            >
+              评论区
+            </Button>
         </div>
       </div>
 
@@ -1083,7 +1214,13 @@ const DocumentEditor: React.FC = () => {
       )}
 
       {/* Word页面样式包裹 */}
-      <div className="word-page-wrap">
+      <div
+        className="word-page-wrap"
+        style={{
+          marginRight: showCommentPanel ? 400 : 0, // 预留 Drawer 宽度
+          transition: 'margin-right 0.3s'
+        }}
+      >
         <div className="word-page">
           <div ref={editorRef} />
         </div>
@@ -1199,12 +1336,12 @@ const DocumentEditor: React.FC = () => {
       <Drawer
         title="评论区"
         placement="right"
-        width={380}
+      
         open={showCommentPanel}
         onClose={() => setShowCommentPanel(false)}
         mask={false}
+        bodyStyle={{ padding: 18, minWidth: 320, maxWidth: 480 }}
       >
-        <Button size="small" onClick={() => setShowCommentPanel(false)} style={{ marginBottom: 8 }}>收起</Button>
         {comments.filter(c => !c.parent).map(c => (
           <div key={c._id} style={{ marginBottom: 18, borderBottom: '1px solid #eee', paddingBottom: 8 }}>
             <div>
@@ -1222,7 +1359,6 @@ const DocumentEditor: React.FC = () => {
                   { headers: { Authorization: `Bearer ${token}` } }
                 );
                 socketRef.current?.emit('commentsUpdated', { docId: id });
-                fetchComments();
               }}>标记已处理</Button>
               {/* 定位到锚点 */}
               <Button size="small" onClick={() => {
@@ -1243,12 +1379,6 @@ const DocumentEditor: React.FC = () => {
           </div>
         ))}
       </Drawer>
-      <Button
-        style={{
-          position: 'fixed', right: 12, top: 220, zIndex: 2000, display: showCommentPanel ? 'none' : 'block'
-        }}
-        onClick={() => setShowCommentPanel(true)}
-      >评论区</Button>
       <Modal
         open={showCommentModal}
         title={replyTo ? '回复评论' : '插入评论'}
@@ -1291,24 +1421,34 @@ const DocumentEditor: React.FC = () => {
         title="历史版本对比"
         onCancel={closeCompare}
         footer={null}
-        width={800}
+        width={900}
       >
-        <div style={{ display: 'flex', gap: 16 }} className="diff-modal-content">
-          <div style={{ flex: 1 }}>
-            <div style={{ fontWeight: 600, marginBottom: 8 }}>历史版本</div>
-            <div
-              style={{ background: '#f6f6f6', padding: 8, minHeight: 120 }}
-              dangerouslySetInnerHTML={{ __html: deltaToHtml(compareContent?.old) }}
-            />
-          </div>
-          <div style={{ flex: 1 }}>
-            <div style={{ fontWeight: 600, marginBottom: 8 }}>当前内容</div>
-            <div
-              style={{ background: '#f6f6f6', padding: 8, minHeight: 120 }}
-              dangerouslySetInnerHTML={{ __html: richDiffHtml(compareContent?.old, compareContent?.now) }}
-            />
-          </div>
-        </div>
+        {(() => {
+          const leftHtml = compareContent?.old ? splitDeltaByLine(compareContent.old).map(l => deltaToHtml(l.ops)) : [];
+          const { rightHtml } = compareContent
+            ? lineDiffHtml(compareContent.old, compareContent.now)
+            : { rightHtml: [] };
+          return (
+            <div style={{ display: 'flex', gap: 16, minHeight: 200 }}>
+              <div style={{ flex: 1, borderRight: '1px solid #eee', paddingRight: 8 }}>
+                <div style={{ fontWeight: 600, marginBottom: 8 }}>历史版本</div>
+                <div style={{ background: '#f6f6f6', padding: 8, minHeight: 120 }}>
+                  {leftHtml.map((html, i) => (
+                    <div key={i} dangerouslySetInnerHTML={{ __html: html }} />
+                  ))}
+                </div>
+              </div>
+              <div style={{ flex: 1, paddingLeft: 8 }}>
+                <div style={{ fontWeight: 600, marginBottom: 8 }}>当前内容</div>
+                <div style={{ background: '#f6f6f6', padding: 8, minHeight: 120 }}>
+                  {rightHtml.map((html, i) => (
+                    <div key={i} dangerouslySetInnerHTML={{ __html: html }} />
+                  ))}
+                </div>
+              </div>
+            </div>
+          );
+        })()}
       </Modal>
     </div>
   );

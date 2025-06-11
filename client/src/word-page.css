@@ -87,6 +87,64 @@
   margin-left: 0;
   margin-right: auto;
 }
+
+/* Quill 编辑器内表格样式增强 */
+.ql-editor table {
+  border-collapse: collapse;
+  width: 100%;
+  margin: 8px 0;
+}
+.ql-editor td, .ql-editor th {
+  border: 1px solid #bbb;
+  padding: 6px 10px;
+  min-width: 60px;
+  min-height: 28px;
+  background: #fff;
+}
+.ql-editor th {
+  background: #f5f5f5;
+  font-weight: bold;
+}
+
+/* word-page.css */
+.word-page-wrap {
+  transition: margin-right 0.3s;
+}
+
+.markdown-preview-pdf table {
+  border-collapse: collapse;
+  width: 100%;
+  margin: 12px 0;
+}
+.markdown-preview-pdf th, .markdown-preview-pdf td {
+  border: 1px solid #bbb;
+  padding: 6px 10px;
+  min-width: 60px;
+  min-height: 28px;
+  background: #fff;
+}
+.markdown-preview-pdf th {
+  background: #f5f5f5;
+  font-weight: bold;
+}
+.markdown-preview-pdf pre {
+  background: #272822;
+  color: #f8f8f2;
+  padding: 10px;
+  border-radius: 6px;
+  overflow-x: auto;
+}
+.markdown-preview-pdf code {
+  background: #f5f5f5;
+  padding: 2px 4px;
+  border-radius: 4px;
+}
+.markdown-preview-pdf {
+  border: 1.5px solid #1677ff;
+  border-radius: 8px;
+  box-sizing: border-box;
+}
+
 .ql-font-serif { font-family: serif; }
 .ql-font-monospace { font-family: monospace; }
 .ql-font-宋体 { font-family: SimSun, serif; }

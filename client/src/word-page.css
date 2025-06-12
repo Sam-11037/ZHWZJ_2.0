@@ -1,0 +1,155 @@
+.word-page-wrap {
+  background: #ededed;
+  min-height: 100vh;
+  padding: 32px 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+.diff-modal-content img {
+  max-width: 100%;
+  height: auto;
+  display: block;
+  margin: 8px 0;
+}
+.word-page {
+  background: #fff;
+  width: 794px;         /* A4宽度 */
+  min-height: 1123px;   /* A4高度 */
+  box-shadow: 0 4px 24px 0 rgba(22,119,255,0.10), 0 1.5px 6px 0 rgba(0,0,0,0.06);
+  border-radius: 12px;
+  margin: 0 auto;
+  box-sizing: border-box;
+  padding: 48px 40px;
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-start;
+}
+.ql-container.ql-snow {
+  border: none !important;
+  border-radius: 0 !important;
+  background: transparent !important;
+}
+.ql-editor {
+  min-height: 900px;
+  font-size: 18px;
+  line-height: 1.8;
+  color: #222;
+  font-family: 'Microsoft YaHei', 'SimSun', Arial, sans-serif;
+  box-sizing: border-box;
+}
+/* 吸顶用户栏 */
+.editor-header-users {
+  position: sticky;
+  top: 0;
+  z-index: 100;
+  background: #fff;
+  box-shadow: 0 2px 8px #f5f5f5;
+}
+
+/* 吸顶标题栏 */
+.editor-header-title {
+  position: sticky;
+  top: 56px; /* 用户栏高度 */
+  z-index: 101;
+  background: #fff;
+  box-shadow: 0 2px 8px #f5f5f5;
+}
+
+/* 吸顶工具栏 */
+.editor-toolbar {
+  position: sticky;
+  top: 120px; /* 用户栏+标题栏高度 */
+  z-index: 102;
+  background: #fff;
+  box-shadow: 0 2px 8px #f5f5f5;
+  transition: box-shadow 0.2s;
+}
+.ql-editor img {
+  max-width: 100%;
+  height: auto;
+  display: block;
+  margin: 8px 0;
+}
+/* 图片对齐样式 */
+.ql-align-center img {
+  display: block;
+  margin-left: auto;
+  margin-right: auto;
+}
+.ql-align-right img {
+  display: block;
+  margin-left: auto;
+  margin-right: 0;
+}
+.ql-align-left img {
+  display: block;
+  margin-left: 0;
+  margin-right: auto;
+}
+
+/* Quill 编辑器内表格样式增强 */
+.ql-editor table {
+  border-collapse: collapse;
+  width: 100%;
+  margin: 8px 0;
+}
+.ql-editor td, .ql-editor th {
+  border: 1px solid #bbb;
+  padding: 6px 10px;
+  min-width: 60px;
+  min-height: 28px;
+  background: #fff;
+}
+.ql-editor th {
+  background: #f5f5f5;
+  font-weight: bold;
+}
+
+/* word-page.css */
+.word-page-wrap {
+  transition: margin-right 0.3s;
+}
+
+.markdown-preview-pdf table {
+  border-collapse: collapse;
+  width: 100%;
+  margin: 12px 0;
+}
+.markdown-preview-pdf th, .markdown-preview-pdf td {
+  border: 1px solid #bbb;
+  padding: 6px 10px;
+  min-width: 60px;
+  min-height: 28px;
+  background: #fff;
+}
+.markdown-preview-pdf th {
+  background: #f5f5f5;
+  font-weight: bold;
+}
+.markdown-preview-pdf pre {
+  background: #272822;
+  color: #f8f8f2;
+  padding: 10px;
+  border-radius: 6px;
+  overflow-x: auto;
+}
+.markdown-preview-pdf code {
+  background: #f5f5f5;
+  padding: 2px 4px;
+  border-radius: 4px;
+}
+.markdown-preview-pdf {
+  border: 1.5px solid #1677ff;
+  border-radius: 8px;
+  box-sizing: border-box;
+}
+
+.ql-font-serif { font-family: serif; }
+.ql-font-monospace { font-family: monospace; }
+.ql-font-宋体 { font-family: SimSun, serif; }
+.ql-font-黑体 { font-family: SimHei, sans-serif; }
+.ql-font-楷体 { font-family: KaiTi, serif; }
+.ql-font-microsoft-yahei { font-family: 'Microsoft YaHei', sans-serif; }
+.ql-font-Arial { font-family: Arial, sans-serif; }
+.ql-font-times-new-roman { font-family: 'Times New Roman', serif; }
